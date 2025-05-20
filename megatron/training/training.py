@@ -184,11 +184,11 @@ def pretrain(
 ):
     """Main training program.
 
-    This function will run the followings in the order provided:
-        1) initialize Megatron.
-        2) setup model, optimizer and lr schedule using the model_provider.
-        3) call train_val_test_data_provider to get train/val/test datasets.
-        4) train the modle using the forward_step_func.
+    #! 该函数按以下顺序执行：
+        #! 1) 初始化 Megatron。
+        #! 2) 使用 `model_provider` 设置模型、优化器和学习率调度。
+        #! 3) 调用 `train_val_test_data_provider` 获取训练/验证/测试数据集。
+        #! 4) 使用 `forward_step_func` 进行模型训练。
 
     Args:
         train_valid_test_dataset_provider: a function that takes the size of
@@ -214,7 +214,7 @@ def pretrain(
     # Run this as early as possible
     setup_gpu_affinity()
 
-    # Initalize and get arguments, timers, and Tensorboard writer.
+    #! Initalize and get arguments, timers, and Tensorboard writer.
     initialize_megatron(
         extra_args_provider=extra_args_provider,
         args_defaults=args_defaults,
@@ -228,12 +228,13 @@ def pretrain(
     if args.log_progress:
         append_to_progress_log("Starting job")
 
-    # Set pytorch JIT layer fusion options and warmup JIT functions.
+    #!  设置 PyTorch JIT 层融合选项，并预热 JIT 函数以优化计算性能
     set_jit_fusion_options()
 
     # Adjust the startup time so it reflects the largest value.
     # This will be closer to what scheduler will see (outside of
     # image ... launches.
+    #!  调整启动时间，以确保获取最小启动时间，利于调度分析
     global _TRAIN_START_TIME
     start_time_tensor = torch.tensor([_TRAIN_START_TIME],
                                      dtype=torch.double,
@@ -254,12 +255,13 @@ def pretrain(
     args = get_args()
     timers = get_timers()
 
-    # Track E2E metrics on pretrain start
+    #! 记录训练开始的时间点
     one_logger_utils.on_pretrain_start()
 
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
     app_metrics['app_build_optimizer_start_time'] = one_logger_utils.get_timestamp_in_ms()
+    #!  初始化模型、优化器、学习率调度器
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
         model_provider, model_type)
 
@@ -269,7 +271,7 @@ def pretrain(
     app_metrics['app_build_optimizer_finish_time'] = one_logger_utils.get_timestamp_in_ms()
     config = get_model_config(model[0])
 
-    # Data stuff.
+    #!   数据加载流程
     app_metrics['app_build_dataiters_start_time'] = one_logger_utils.get_timestamp_in_ms()
     timers('train/valid/test-data-iterators-setup', log_level=0).start(
         barrier=True)
@@ -293,6 +295,7 @@ def pretrain(
     app_metrics['app_build_dataiters_finish_time'] = one_logger_utils.get_timestamp_in_ms()
 
     # Track if training is enabled. Can only be done once args.do_train is assigned after dataloader is built.
+    #! 记录训练、验证、测试的启用状态
     one_logger_utils.track_config_flags(args.train_iters, args.skip_train, args.do_train,
                                         args.do_valid, args.do_test, args.dataloader_type,
                                         args.retro_project_dir, args.retro_cyclic_train_iters)
@@ -308,6 +311,7 @@ def pretrain(
     one_logger = get_one_logger()
     one_logger and one_logger.log_metrics(app_metrics)
 
+    #! 训练过程
     if not args.skip_train:
         print_rank_0('training ...')
 
@@ -318,6 +322,7 @@ def pretrain(
 
         iteration = 0
         if args.do_train and args.train_iters > 0:
+            #!  训练流程调用位置
             iteration, num_floating_point_operations_so_far = train(
                 forward_step_func,
                 model, optimizer, opt_param_scheduler,
@@ -326,6 +331,7 @@ def pretrain(
 
         print_datetime('after training is done')
 
+        #! 保存检查点
         if args.save and iteration != 0 and iteration % args.save_interval != 0:
             save_checkpoint(iteration, model, optimizer, opt_param_scheduler,
                             num_floating_point_operations_so_far, checkpointing_context)
@@ -339,6 +345,7 @@ def pretrain(
 
         iteration = args.iteration
 
+    #!  进行验证
     if args.do_valid:
         prefix = f'iteration {iteration} on validation set'
         evaluate_and_print_results(prefix, forward_step_func,
@@ -346,6 +353,7 @@ def pretrain(
                                    iteration, process_non_loss_data_func, config,
                                    verbose=True, write_to_tensorboard=not args.skip_train)
 
+    #!  进行测试
     if args.do_test:
         prefix = f'iteration {iteration} on test set'
         evaluate_and_print_results(prefix, forward_step_func,
@@ -1203,6 +1211,8 @@ def train(forward_step_func, model, optimizer, opt_param_scheduler,
                 decoupled_learning_rate = param_group['lr']
             else:
                 learning_rate = param_group['lr']
+                
+        #! 使用Wandb记录训练日志
         report_memory_flag = training_log(loss_dict, total_loss_dict,
                                           learning_rate,
                                           decoupled_learning_rate,
