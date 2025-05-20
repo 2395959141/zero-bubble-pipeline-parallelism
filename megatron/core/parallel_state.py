@@ -122,6 +122,7 @@ def get_nccl_options(pg_name, nccl_comm_cfgs):
         return None
 
 
+#!  在不同的并行模式 下划分 GPU 进程组，并返回对应的 rank 组
 def generate_masked_orthogonal_rank_groups(
     world_size: int,
     parallel_size: List[int],
@@ -242,6 +243,7 @@ class RankGenerator(object):
         self.cp = cp
         self.world_size = tp * dp * pp * cp
 
+        #! 并行方式与对应大小的映射
         self.name_to_size = {
             "tp": self.tp,
             "pp": self.pp,
@@ -256,13 +258,15 @@ class RankGenerator(object):
             if 'ep-dp' not in order and 'dp-ep' not in order:
                 raise RuntimeError(f"The ep and dp must be adjacent in order ({self.order}).")
 
+        #!  解析 order，例如 "tp-dp-pp"
+        #!  这里的 order，它决定了 GPU 进程的排列方式
         for name in self.name_to_size.keys():
             if name not in order and self.name_to_size[name] != 1:
                 raise RuntimeError(
                     f"The size of ({name}) is ({self.name_to_size[name]}), but you haven't specified the order ({self.order})."
                 )
             elif name not in order:
-                order = order + '-' + name
+                order = order + '-' + name    #! 默认加到末尾
 
         self.order_w_ep = order
         self.order_wo_ep = '-'.join([token for token in order.split('-') if token != 'ep'])
@@ -344,6 +348,7 @@ def default_position_embedding_ranks(pp_ranks, split_rank=None):
         return [pp_ranks[0]]
 
 
+#!  构建并行训练结构
 def initialize_model_parallel(
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
@@ -492,6 +497,8 @@ def initialize_model_parallel(
         _PIPELINE_MODEL_PARALLEL_DECODER_START = encoder_pipeline_model_parallel_size
 
     # Get world size and rank. Ensure some consistencies.
+    #! 在Megatron创建并行组之前
+    #! 确保 torch.distributed 已经启动
     assert torch.distributed.is_initialized()
     world_size: int = torch.distributed.get_world_size()
 
@@ -509,7 +516,7 @@ def initialize_model_parallel(
     data_parallel_size: int = world_size // (
         tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size
     )
-
+        #! 数据并行 需要能整除 专家并行
     if data_parallel_size % expert_model_parallel_size != 0:
         raise RuntimeError(
             f"data_parallel_size ({data_parallel_size}) is not divisible by expert_model_parallel_size "
@@ -544,6 +551,7 @@ def initialize_model_parallel(
         with open(nccl_communicator_config_path, "r") as stream:
             nccl_comm_cfgs = yaml.safe_load(stream)
 
+    #!  并行计算的“坐标系”
     rank_generator = RankGenerator(
         tp=tensor_model_parallel_size,
         ep=expert_model_parallel_size,
@@ -563,15 +571,21 @@ def initialize_model_parallel(
     global _DATA_PARALLEL_GLOBAL_RANKS_WITH_CP
     assert _DATA_PARALLEL_GROUP is None, 'data parallel group is already initialized'
 
+    #!  遍历数据并行（Data Parallel, DP）的 rank 组
     for ranks in rank_generator.get_ranks('dp'):
+        #!  创建数据并行的 NCCL 通信组，所有属于同一数据并行组的 GPU 会被分配到同一组
         group = torch.distributed.new_group(
             ranks, timeout=timeout, pg_options=get_nccl_options('dp', nccl_comm_cfgs)
         )
+        #?  额外创建一个 Gloo 后端的通信组，主要用于非 GPU 设备或跨网络同步
         group_gloo = torch.distributed.new_group(ranks, timeout=timeout, backend="gloo")
+        #!  如果当前 GPU 进程属于该数据并行组，则存储相应的通信组信息
         if rank in ranks:
             _DATA_PARALLEL_GROUP = group
             _DATA_PARALLEL_GROUP_GLOO = group_gloo
             _DATA_PARALLEL_GLOBAL_RANKS = ranks
+
+    #!  遍历数据并行（Data Parallel, DP）和 下文并行（CP）的 rank 组       
     for ranks_with_cp in rank_generator.get_ranks('dp-cp'):
         group_with_cp = torch.distributed.new_group(
             ranks_with_cp, timeout=timeout, pg_options=get_nccl_options('dp_cp', nccl_comm_cfgs)
@@ -616,7 +630,8 @@ def initialize_model_parallel(
             _CONTEXT_PARALLEL_GROUP = group
             _CONTEXT_PARALLEL_GLOBAL_RANKS = ranks
 
-    # Build the model-parallel groups.
+    #! Build the model-parallel groups.
+    #! 创建 模型并行通信组
     global _MODEL_PARALLEL_GROUP
     assert _MODEL_PARALLEL_GROUP is None, 'model parallel group is already initialized'
     for ranks in rank_generator.get_ranks('tp-pp'):
@@ -626,7 +641,8 @@ def initialize_model_parallel(
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
 
-    # Build the model-parallel groups with expert parallel
+    #! Build the model-parallel groups with expert parallel
+    #!  创建包括专家并行的 模型并行通信组
     global _MODEL_AND_EXPERT_PARALLEL_GROUP
     assert (
         _MODEL_AND_EXPERT_PARALLEL_GROUP is None
@@ -639,6 +655,7 @@ def initialize_model_parallel(
             _MODEL_AND_EXPERT_PARALLEL_GROUP = group
 
     # Build the tensor model-parallel groups.
+    #! # 遍历张量并行（Tensor Parallel, TP）的 rank 组
     global _TENSOR_MODEL_PARALLEL_GROUP
     global _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS
     assert (
@@ -653,8 +670,9 @@ def initialize_model_parallel(
             _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS = ranks
 
     # Build the pipeline model-parallel groups and embedding groups
+    #!  遍历流水线并行（Pipeline Parallel, PP）的 rank 组
     # (first and last rank in each pipeline model-parallel group).
-    global _PIPELINE_MODEL_PARALLEL_GROUP
+    global _PIPELINE_MODEL_PARALLEL_GROUPs
     global _PIPELINE_GLOBAL_RANKS
     assert (
         _PIPELINE_MODEL_PARALLEL_GROUP is None
@@ -672,7 +690,7 @@ def initialize_model_parallel(
         if rank in ranks:
             _PIPELINE_MODEL_PARALLEL_GROUP = group
             _PIPELINE_GLOBAL_RANKS = ranks
-
+        #!  获取负责嵌入层的 rank 列表 (通常中流水线的第一个和最后一个阶段)
         embedding_ranks = get_embedding_ranks(ranks)
         group = torch.distributed.new_group(
             embedding_ranks,
