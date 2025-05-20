@@ -80,7 +80,7 @@ def model_provider(pre_process=True, post_process=True) -> Union[GPTModel, megat
                 transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(args.num_experts, args.moe_grouped_gemm, args.qk_layernorm)
             else:
                 transformer_layer_spec = get_gpt_layer_local_spec(args.num_experts, args.moe_grouped_gemm, args.qk_layernorm)
-
+        #!  构建 GPT 模型
         model = GPTModel(
             config=config,
             transformer_layer_spec=transformer_layer_spec,
@@ -152,7 +152,7 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     """
     args = get_args()
 
-    losses = output_tensor.float()
+    losses = output_tensor.float()  #!  将输出张量转换为浮点数
     loss_mask = loss_mask.view(-1).float()
     total_tokens = loss_mask.sum()
     loss = torch.cat([torch.sum(losses.view(-1) * loss_mask).view(1), total_tokens.view(1)])
@@ -160,7 +160,7 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
     if args.context_parallel_size > 1:
         torch.distributed.all_reduce(loss, group=mpu.get_context_parallel_group())
 
-    # Check individual rank losses are not NaN prior to DP all-reduce.
+    #! 检查每个 rank 的损失是否为 NaN 之前进行 DP all-reduce。
     if args.check_for_nan_in_loss_and_grad:
         global_rank = torch.distributed.get_rank()
         assert not loss[0].isnan(), (
@@ -170,6 +170,7 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor):
 
     # Reduce loss for logging.
     reporting_loss = loss.clone().detach()
+    #! 在数据并行分组中进行 all_reduce 操作
     torch.distributed.all_reduce(reporting_loss, group=mpu.get_data_parallel_group())
 
     local_num_tokens = loss[1].clone().detach().to(torch.int)
@@ -213,6 +214,7 @@ class DataLoaderStore:
         return data
 
 
+#! 定义训练过程中的前向传播步骤
 def forward_step(data_iterator, model: GPTModel):
     """Forward training step.
 
@@ -237,7 +239,7 @@ def forward_step(data_iterator, model: GPTModel):
     else:
         DataLoaderStore.push(data_iterator, h2d_stream=False)
         tokens, labels, loss_mask, attention_mask, position_ids = DataLoaderStore.pop()
-
+    #!  使用 GPT 模型进行前向传播
     with stimer:
         output_tensor = model(tokens, position_ids, attention_mask,
                               labels=labels)
