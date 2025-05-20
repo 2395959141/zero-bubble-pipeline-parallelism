@@ -74,6 +74,7 @@ class GPTModel(LanguageModule):
         self.max_position_embeddings = max_sequence_length
         self.rotary_percent = rotary_percent
 
+        #!  1. Embedding层
         if self.pre_process:
             self.embedding = LanguageModelEmbedding(
                 config=self.config,
@@ -91,7 +92,7 @@ class GPTModel(LanguageModule):
                 rotary_base=rotary_base,
             )
 
-        # Transformer.
+        #!  2. Transformer层
         self.decoder = TransformerBlock(
             config=self.config,
             spec=transformer_layer_spec,
@@ -99,7 +100,7 @@ class GPTModel(LanguageModule):
             post_process=self.post_process,
         )
 
-        # Output
+        #!  3. 输出层
         if post_process:
             if self.config.defer_embedding_wgrad_compute:
                 # The embedding activation buffer preserves a reference to the input activations

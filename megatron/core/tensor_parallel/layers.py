@@ -691,6 +691,7 @@ def linear_with_grad_accumulation_and_async_allreduce(
 linear_with_grad_accumulation_and_async_allreduce.warned = False
 
 
+#!  在输出维度上进行大规模扩展的线性层
 class ColumnParallelLinear(torch.nn.Module):
     """Linear layer with column parallelism.
 
@@ -764,7 +765,7 @@ class ColumnParallelLinear(torch.nn.Module):
         # Parameters.
         # Note: torch.nn.functional.linear performs XA^T + b and as a result
         # we allocate the transpose.
-        # Initialize weight.
+        #!  Initialize weight.
         if not skip_weight_param_allocation:
             if config.use_cpu_initialization:
                 self.weight = Parameter(
@@ -894,7 +895,7 @@ class ColumnParallelLinear(torch.nn.Module):
                     f"supplied weight's shape is {tuple(weight.shape)}, "
                     f"not {expected_shape} as expected"
                 )
-
+        #! _cpu_offloading_context上下文管理器
         if self.config._cpu_offloading_context is not None:
             if self.config._cpu_offloading_context.inside_context == True:
                 assert (
