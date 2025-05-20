@@ -83,10 +83,12 @@ class GroupBuildingBlockScheduler(object):
         print(min_k, gcd_kv, group_size, min_group_size, chunk_num)
 
         building_block: cls.Schedule
+        #! 3 * group_size * chunk_num表示每个设备在调度块中需要处理的总步骤数
         building_block = [
             [cls.none_pass for _ in range(3 * group_size * chunk_num)] for _i in range(device_num)
         ]
         # bb_len = 6 * group_size * chunk_num - 3 * group_size + offset * (device_num - 1)
+         #! 3 * group_size * chunk_num表示每个设备在调度块中需要处理的总步骤数
         bb_len = 3 * group_size * chunk_num
         last_f_before_b = {}
         for c_i in range(chunk_num):
