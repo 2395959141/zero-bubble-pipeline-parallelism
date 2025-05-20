@@ -66,7 +66,7 @@ def initialize_megatron(
     # set logging level
     setup_logging()
 
-    # torch.distributed initialization
+    #! torch.distributed initialization
     def finish_mpu_init():
         args = get_args()
         # Pytorch distributed.
@@ -217,18 +217,19 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
 
     device_count = torch.cuda.device_count()
     if torch.distributed.is_initialized():
-
+        #? 如果 torch.distributed 已经初始化，则跳过初始化
         if args.rank == 0:
             print(
                 "torch distributed is already initialized, "
                 "skipping initialization ...",
                 flush=True,
             )
+        #! 如果 torch.distributed`` 进程已经初始化了，就直接获取当前进程的rank和world_size
         args.rank = torch.distributed.get_rank()
         args.world_size = torch.distributed.get_world_size()
 
     else:
-
+        #! 如果 torch.distributed`` 进程没有初始化，则进行初始化
         if args.rank == 0:
             print("> initializing torch distributed ...", flush=True)
         # Manually set the device ids.
@@ -247,6 +248,7 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
             print(f"init process group {args.rank} of {args.world_size} pid {os.getpid()}")
             assert args.distributed_backend == "nccl"
             backend = "cpu:gloo,cuda:nccl"
+        #! 初始化并启动分布式环境
         torch.distributed.init_process_group(
             backend=backend,
             world_size=args.world_size,
@@ -260,6 +262,7 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
         if mpu.model_parallel_is_initialized():
             print("model parallel is already initialized")
         else:
+            #! 设定各种并行策略
             mpu.initialize_model_parallel(
                 args.tensor_model_parallel_size,
                 args.pipeline_model_parallel_size,
